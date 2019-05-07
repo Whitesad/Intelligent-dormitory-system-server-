@@ -6,44 +6,56 @@ import pymysql
 import threadpool
 
 class Sock():
-    hsotName=''
+    hostName=''
     hostIp=''
-    port=5000
+    port=50000
     sqlPasswd='yang'
 
     __userQueue__=[]
     __mesQueue__=[]
 
     def __init__(self):
-        self.hsotName=socket.gethostname()
+        self.hostName=socket.gethostname()
         self.hostIp=socket.gethostbyname(self.hostName)
- 
-        self.__socketServer__=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        print('Socket '+self.hsotName+' create')
-        self.__socketServer__.bind(self.hostIp,self.port)
+        # socket.AF_INET, socket.SOCK_STREAM
+        self.__socketServer__=socket.socket()
+        print('Socket '+self.hostName+' create')
+        self.__socketServer__.bind((self.hostIp,self.port))
         self.__socketServer__.listen(10)
         print('Socket '+self.hostIp+' new listening')
-        
-        self.self.SockSQL = pymysql.connect(host='127.0.0.1', user='root', password=self.sqlPasswd, db='socketsql', charset='utf8', port=3306)
-        print('user root socketSQL 连接成功')
-        
-        self.__chatTheradPool__=threadpool.ThreadPool(25)
 
+        self.SockSQL = pymysql.connect(host='127.0.0.1', user='root', password=self.sqlPasswd, db='socketsql', charset='utf8', port=3306)
+        print('user:root socketSQL 连接成功')
+
+        self.__chatTheradPool__=threadpool.ThreadPool(25)
+        self.__sendThreadPool__=threadpool.ThreadPool(25)
+        # con=socket.socket()
+        # requests = threadpool.makeRequests(self.__Thread_Listen__, [([self, con], {})])
+    def setHostIp(self,hostIp):
+        self.hostIp=hostIp
+    def setSQLPasswd(self,passWd):
+        self.sqlPasswd=passWd
     def startServer(self):
+        print("本地socket服务："+str(self.__socketServer__))
         while True:
             con, addr = self.__socketServer__.accept()  # recieve connect,addr includes ip and port
             print('Connect ' + addr[0] + ':' + str(addr[1]) + " Try to Connect")
             self.__LoginReq__(con)
 
-    def __Thread_Listen__(self,con):
+    def __BroadCast__(self,dict_dict):
+        for user in self.__userQueue__:
+            self.__Send__(user,dict_dict)
+    def __Thread_Listen__( self , con ) :
         while True:
             try:
                 dict_dict = self.__Receive__(con)
                 if (dict_dict["type"] == "TEXT_MES"):
-                    print('Receive:')
-                    print(dict_dict)
+                    threading.Thread(target=self.__BroadCast__,args=(dict_dict,)).start()
+                    print('receive:'+str(dict_dict))
             except:
                 print('XX' + " Exists")
+                con.close()
+                self.__userQueue__.remove(con)
                 return
 
 
@@ -60,10 +72,11 @@ class Sock():
             status = 'SAME_NAME'
         return status
 
-    def __StartChatThread__(self,con):
-        con.setblocking(0)
+    def __StartChatThread__(self , con):
+        # con.setblocking(0)
         self.__userQueue__.append(con)
-        requests=threadpool.makeRequests(self.__Thread_Listen__,[con])
+        # threading.Thread(target=self.__Thread_Listen__,args=(con,)).start()
+        requests=threadpool.makeRequests(self.__Thread_Listen__, [([con],None)] )
         for req in requests:
             self.__chatTheradPool__.putRequest(req)
 
@@ -89,42 +102,51 @@ class Sock():
         return result
     def __LoginReq__(self,con):
         dict_mes=self.__Receive__(con)
+        loginResult='None'
         if (dict_mes['type'] == 'LOGIN_MES'):
             if (dict_mes['status'] == 'login'):
                 result = self.__Check_Memship__(dict_mes)
                 if (result == 'AC'):
                     print('user ' + dict_mes['username'] + ' Login AC' + ' ip: ' + dict_mes['ip'])
+                    self.__StartChatThread__(con)
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'AC'})
-
+                    loginResult='LOGIN_AC'
                 elif (result == 'WRONG_PASSWORD'):
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'WRONG_PASSWORD'})
+                    loginResult='WRONG_PASSWORD'
                 elif (result == 'NO_MEMSHIP'):
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'NO_MEMSHIP'})
+                    loginResult = 'NO_MEMSHIP'
                 elif (result == 'QUERY_ERROR'):
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'QUERY_ERROR'})
+                    loginResult = 'QUERY_ERROR'
         elif (dict_mes['type'] == 'REGISTER_MES'):
             if (dict_mes['status'] == 'register'):
                 result = self.__Register__(dict_mes)
                 if (result == 'SAME_NAME'):
                     self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'SAME_NAME'})
+                    loginResult = 'SAME_NAME'
                 elif (result == 'AC'):
                     self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'AC'})
+                    loginResult = 'REGISTER_AC'
                 elif (result == 'REGISTER_ERROR'):
                     self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'REGISTER_ERROR'})
-        try:
-            dict_mes = self.__Receive__(con)
-        except:
-            return False
+                    loginResult = 'REGISTER_ERROR'
+        if(loginResult!='LOGIN_AC'):
+            print('Login Failure')
+            con.close()
+            self.__userQueue__.remove(con)
+        return loginResult
 
-    def __Receive__(con):
+    def __Receive__(self,con):
         dict_bytes = con.recv(2048)
         dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
         return dict_dict
-    def __Send__(sock,dict):
-        print(sock)
+    def __Send__(self,sock,dict):
         bytes_mes=bytes(json.dumps(dict),encoding='utf8')
         sock.send(bytes_mes)
-        print("send dict"+str(dict))
+        print("send dict to "+str(sock))
+        print(str(dict)+"\n")
 
     def __SQL_INSERT__(self,string):
         cursor = self.SockSQL.cursor()
@@ -151,12 +173,13 @@ class Sock():
     
 def fun(string):
     print(string)
-
-
-if __name__=="__main__":
-    pool=threadpool.ThreadPool(10)
-    requests = threadpool.makeRequests(fun,["whitesad"])
+    pool = threadpool.ThreadPool(10)
+    requests = threadpool.makeRequests(fun, ["whitesad"])
     for req in requests:
         pool.putRequest(req)
     pool.wait()
     threadpool.WorkRequest
+
+if __name__=="__main__":
+    socketServer=Sock()
+    socketServer.startServer()
