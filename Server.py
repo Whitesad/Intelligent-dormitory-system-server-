@@ -149,7 +149,8 @@ class Sock():
         if (loginResult != 'LOGIN_AC'):
             print('Login Failure')
             con.close()
-            self.__userDict.pop(dict_mes["username"])
+            if(dict_mes['username'] in self.__userDict__.keys()):
+                self.__userDict__.pop(dict_mes["username"])
         return loginResult
 
     def __Receive__(self, con):
