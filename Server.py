@@ -33,8 +33,7 @@ class Sock():
         self.SockSQL = pymysql.connect(host='127.0.0.1', user='root', password=self.sqlPasswd, db='socketsql',
                                        charset='utf8', port=3306)
         print('user:root socketSQL 连接成功')
-        global user
-        user=self.__userDict__
+
         self.__chatTheradPool__ = threadpool.ThreadPool(25)
         self.__sendThreadPool__ = threadpool.ThreadPool(25)
         # con=socket.socket()
@@ -147,7 +146,7 @@ class Sock():
                     self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'REGISTER_ERROR'})
                     loginResult = 'REGISTER_ERROR'
         if (loginResult != 'LOGIN_AC'):
-            print('Login Failure')
+            print(loginResult)
             con.close()
             if(dict_mes['username'] in self.__userDict__.keys()):
                 self.__userDict__.pop(dict_mes["username"])
@@ -163,6 +162,15 @@ class Sock():
         sock.send(bytes_mes)
         print("send dict to " + str(sock))
         print(str(dict) + "\n")
+
+    def __Close__(self,username,con):
+        con.close()
+        if(username in self.__userDict__.keys()):
+            con_list=self.__userDict__[username]
+            if(con in con_list):
+                con_list.remove(con)
+                if(not len(con_list)):
+                    self.__userDict__.pop(username)
 
     def __SQL_INSERT__(self, string):
         cursor = self.SockSQL.cursor()
