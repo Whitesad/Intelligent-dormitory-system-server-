@@ -53,21 +53,20 @@ class Sock():
             self.__LoginReq__(con)
 
     def __BroadCast__(self, dict_dict):
-        for user, con in self.__userDict__.items():
-            self.__Send__(con, self.__MakeTextDict__(dict_dict))
+        for user, con_list in self.__userDict__.items():
+            for con in con_list:
+                self.__Send__(con, self.__MakeTextDict__(dict_dict))
 
-    def __Thread_Listen__(self, username):
-        con = self.__userDict__[username]
+    def __Thread_Listen__(self, username,con):
         while True:
             try:
                 dict_dict = self.__Receive__(con)
-                if (dict_dict["type"] == "TEXT_MES"):
+                if ( "type" in dict_dict.keys() and dict_dict["type"] == "TEXT_MES"):
+                    self.__RecordMes__(dict_dict)
                     threading.Thread(target=self.__BroadCast__, args=(dict_dict,)).start()
                     print('receive:' + str(dict_dict))
             except:
-                print('XX' + " Exists")
-                con.close()
-                self.__userDict__.pop(username)
+                self.__Close__(username,con)
                 return
 
     def __Register__(self, dict_dict):
@@ -83,10 +82,14 @@ class Sock():
             status = 'SAME_NAME'
         return status
 
-    def __StartChatThread__(self, username):
+    def __StartChatThread__(self, username,con):
         # con.setblocking(0)
-        con = self.__userDict__[username]
-        threading.Thread(target=self.__Thread_Listen__, args=(username,)).start()
+        if(username in self.__userDict__.keys()):
+            self.__userDict__[username].append(con)
+        else:
+            self.__userDict__[username]=[con]
+
+        threading.Thread(target=self.__Thread_Listen__, args=(username,con)).start()
         # requests=threadpool.makeRequests(self.__Thread_Listen__, [([con],None)] )
         # for req in requests:
         #     self.__chatTheradPool__.putRequest(req)
@@ -113,15 +116,17 @@ class Sock():
         return result
 
     def __LoginReq__(self, con):
-        dict_mes = self.__Receive__(con)
+        try:
+            dict_mes = self.__Receive__(con)
+        except:
+            return
         loginResult = 'None'
         if (dict_mes['type'] == 'LOGIN_MES'):
             if (dict_mes['status'] == 'login'):
                 result = self.__Check_Memship__(dict_mes)
                 if (result == 'AC'):
                     print('user ' + dict_mes['username'] + ' Login AC' + ' ip: ' + dict_mes['ip'])
-                    self.__userDict__[dict_mes["username"]] = con
-                    self.__StartChatThread__(dict_mes["username"])
+                    self.__StartChatThread__(dict_mes["username"],con)
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'AC'})
                     loginResult = 'LOGIN_AC'
                 elif (result == 'WRONG_PASSWORD'):
@@ -148,29 +153,56 @@ class Sock():
         if (loginResult != 'LOGIN_AC'):
             print(loginResult)
             con.close()
-            if(dict_mes['username'] in self.__userDict__.keys()):
-                self.__userDict__.pop(dict_mes["username"])
         return loginResult
 
     def __Receive__(self, con):
-        dict_bytes = con.recv(2048)
-        dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
-        return dict_dict
+        try:
+            dict_bytes = con.recv(2048)
+            dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
+            return dict_dict
+        except:
+            raise Exception('Receive Error!')
 
     def __Send__(self, sock, dict):
-        bytes_mes = bytes(json.dumps(dict), encoding='utf8')
-        sock.send(bytes_mes)
-        print("send dict to " + str(sock))
-        print(str(dict) + "\n")
+        try:
+            bytes_mes = bytes(json.dumps(dict), encoding='utf8')
+            sock.send(bytes_mes)
+            print("send dict to " + str(sock))
+            print(str(dict) + "\n")
+        except:
+            print('Send to '+str(sock)+' Error!')
+            raise Exception('Send Error!')
 
     def __Close__(self,username,con):
+
+        print(username+" exits")
         con.close()
         if(username in self.__userDict__.keys()):
             con_list=self.__userDict__[username]
             if(con in con_list):
                 con_list.remove(con)
-                if(not len(con_list)):
+                print("Connect has removed")
+                if(len(con_list)==0):
                     self.__userDict__.pop(username)
+                    print(username+" exits completely")
+
+    def __RecordMes__(self,dict_text):
+        keys=dict_text.keys()
+        try:
+            if('localname' in keys and 'username' in keys and 'content' in keys):
+                cur_time = datetime.datetime.now()
+                date = str(cur_time.year) + '-' + str(cur_time.month) + '-' + str(cur_time.day)
+                time = str(cur_time.hour) + ':' + str(cur_time.minute) + ':' + str(cur_time.second)
+                insert = 'INSERT INTO record_test values ("{date}","{time}","{device}","{username}","{content}");'.format(
+                    date=date, time=time, device=dict_text['localname'], username=dict_text['username'],
+                    content=dict_text['content'])
+                self.__SQL_INSERT__(insert)
+            else:
+                raise Exception('Format Error!')
+            return
+        except:
+            print('Record Error')
+
 
     def __SQL_INSERT__(self, string):
         cursor = self.SockSQL.cursor()
