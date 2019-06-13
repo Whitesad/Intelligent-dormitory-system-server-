@@ -4,14 +4,18 @@ import json
 import datetime
 import pymysql
 import threadpool
+import os
 
 user={}
+# FTPUserName=""
+# FTPPassWord=""
+
 
 class Sock():
     hostName = ''
     hostIp = ''
     port = 50000
-    sqlPasswd = 'yang'
+    sqlPasswd = ''
 
     __userDict__ = {}
     __mesQueue__ = []
@@ -30,14 +34,15 @@ class Sock():
         self.__socketServer__.listen(10)
         print('Socket ' + self.hostIp + ' new listening')
 
-        self.SockSQL = pymysql.connect(host='127.0.0.1', user='root', password=self.sqlPasswd, db='socketsql',
-                                       charset='utf8', port=3306)
-        print('user:root socketSQL 连接成功')
+
 
         self.__chatTheradPool__ = threadpool.ThreadPool(25)
         self.__sendThreadPool__ = threadpool.ThreadPool(25)
         # con=socket.socket()
         # requests = threadpool.makeRequests(self.__Thread_Listen__, [([self, con], {})])
+    def close(self):
+        self.SockSQL.close()
+        print('Close the database')
 
     def setHostIp(self, hostIp):
         self.hostIp = hostIp
@@ -46,6 +51,10 @@ class Sock():
         self.sqlPasswd = passWd
 
     def startServer(self):
+        self.SockSQL = pymysql.connect(host='127.0.0.1', user='root', password=self.sqlPasswd, db='socketsql',
+                                       charset='utf8', port=3306)
+        print('user:root socketSQL 连接成功')
+
         print("本地socket服务：" + str(self.__socketServer__))
         while True:
             con, addr = self.__socketServer__.accept()  # recieve connect,addr includes ip and port
@@ -127,7 +136,7 @@ class Sock():
                 if (result == 'AC'):
                     print('user ' + dict_mes['username'] + ' Login AC' + ' ip: ' + dict_mes['ip'])
                     self.__StartChatThread__(dict_mes["username"],con)
-                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'AC'})
+                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'AC',"ftpusername":FTPUserName,"ftppassword":FTPPassWord})
                     loginResult = 'LOGIN_AC'
                 elif (result == 'WRONG_PASSWORD'):
                     self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'WRONG_PASSWORD'})
@@ -238,5 +247,24 @@ def fun(string):
     threadpool.WorkRequest
 
 if __name__ == "__main__":
-    socketServer = Sock()
-    socketServer.startServer()
+    socketServer=object
+    try:
+        config=open('config.conf')
+        str_config=""
+        for line in config:
+            str_config+=line.strip()
+        str_config.replace("\n",'')
+        global FTPPassWord
+        global FTPUserName
+        dict_config=json.loads(str_config)
+        FTPPassWord=dict_config['ftppassword']
+        FTPUserName=dict_config['ftpusername']
+        socketServer = Sock()
+        socketServer.setSQLPasswd(dict_config['sqlpassword'])
+        socketServer.startServer()
+    except IOError:
+        print('config.conf does not exists!')
+    finally:
+        config.close()
+        socketServer.close()
+
