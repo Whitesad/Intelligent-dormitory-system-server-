@@ -2,13 +2,86 @@ import socket
 import threading
 import json
 import datetime
+import time
+
 import pymysql
 import threadpool
-import os
+from Crypto import Random
+from Crypto.Cipher import PKCS1_v1_5 as Cipher_pkcs1_v1_5
+from Crypto.PublicKey import RSA
+import base64
+
 
 user={}
 # FTPUserName=""
 # FTPPassWord=""
+
+
+class User:
+    def __init__(self,username="",password="",publickey="",con=socket.socket()):
+        self.username=username
+        self.password=password
+        self.publickey=publickey
+        self.RsaMaker=RSAMaker()
+        self.con=con
+        self.isDecrypt=False
+    def setUserName(self,username):
+        self.username=username
+    def setPassWord(self,password):
+        self.password=password
+    def setPublicKey(self,publickey):
+        self.publickey=publickey
+        try:
+            self.RsaMaker.SetClientPublicKey(publickey)
+        except Exception as e:
+            print(str(e))
+
+    def setConnect(self,con):
+        self.con=con
+
+    def getUserName(self):
+        return self.username
+    def getPassWord(self):
+        self.password
+    def getPublicKey(self):
+        self.publickey
+
+class RSAMaker:
+    def __init__(self):
+        pass
+
+    def SetClientPublicKey(self,publickey):
+        try:
+            self.__ClientPublicKey=publickey
+            self.__ClientRsakey = RSA.importKey(self.__ClientPublicKey)
+            self.__ClientCipher = Cipher_pkcs1_v1_5.new(self.__ClientRsakey)
+        except:
+            raise Exception('PublicKey import error!')
+
+    def Encrypt(self,content):
+        return str(base64.b64encode(self.__ClientCipher.encrypt(bytes(content,encoding='utf8'))),encoding='utf8')
+
+    def Decrypt(self,content):
+        # rsakey=RSA.importKey(self.__private_pem)
+        # cipher = Cipher_pkcs1_v1_5.new(rsakey)
+        # text = cipher.decrypt(base64.b64decode(content), self.__random_generator)
+        text = self.__cipher.decrypt(base64.b64decode(content), self.__random_generator)
+        text=str(text,encoding='utf8')
+        return text
+
+    def CreateRSAKey(self):
+        # 伪随机数生成器
+        self.__random_generator = Random.new().read
+        # rsa算法生成实例
+        self.__rsa = RSA.generate(1024, self.__random_generator)
+
+        # master的秘钥对的生成
+        self.__private_pem = self.__rsa.exportKey()
+        print('Successfully create the privatekey!')
+        self.public_pem = self.__rsa.publickey().exportKey()
+        print('Successfully create the publickey!')
+        self.__rsakey = RSA.importKey(self.__private_pem)
+        self.__cipher = Cipher_pkcs1_v1_5.new(self.__rsakey)
 
 
 class Sock():
@@ -34,7 +107,8 @@ class Sock():
         self.__socketServer__.listen(10)
         print('Socket ' + self.hostIp + ' new listening')
 
-
+        self.__rsaMaker=RSAMaker()
+        self.__rsaMaker.CreateRSAKey()
 
         self.__chatTheradPool__ = threadpool.ThreadPool(25)
         self.__sendThreadPool__ = threadpool.ThreadPool(25)
@@ -59,23 +133,26 @@ class Sock():
         while True:
             con, addr = self.__socketServer__.accept()  # recieve connect,addr includes ip and port
             print('Connect ' + addr[0] + ':' + str(addr[1]) + " Try to Connect")
-            self.__LoginReq__(con)
+            user=User(con=con)
+            threading.Thread(target=self.__SendPublicKey__,args=(user,)).start()
 
     def __BroadCast__(self, dict_dict):
-        for user, con_list in self.__userDict__.items():
-            for con in con_list:
-                self.__Send__(con, self.__MakeTextDict__(dict_dict))
+        for username, user_list in self.__userDict__.items():
+            for user in user_list:
+                self.__Send__(user , user.con, self.__MakeTextDict__(dict_dict))
 
-    def __Thread_Listen__(self, username,con):
+    def __Thread_Listen__(self, user):
+        username = user.username
+        con = user.con
         while True:
             try:
-                dict_dict = self.__Receive__(con)
+                dict_dict = self.__Receive__(user,con)
                 if ( "type" in dict_dict.keys() and dict_dict["type"] == "TEXT_MES"):
                     self.__RecordMes__(dict_dict)
                     threading.Thread(target=self.__BroadCast__, args=(dict_dict,)).start()
                     print('receive:' + str(dict_dict))
             except:
-                self.__Close__(username,con)
+                self.__Close__(user)
                 return
 
     def __Register__(self, dict_dict):
@@ -91,14 +168,16 @@ class Sock():
             status = 'SAME_NAME'
         return status
 
-    def __StartChatThread__(self, username,con):
+    def __StartChatThread__(self, user):
+        username=user.username
+        con=user.con
         # con.setblocking(0)
         if(username in self.__userDict__.keys()):
-            self.__userDict__[username].append(con)
+            self.__userDict__[username].append(user)
         else:
-            self.__userDict__[username]=[con]
+            self.__userDict__[username]=[user]
 
-        threading.Thread(target=self.__Thread_Listen__, args=(username,con)).start()
+        threading.Thread(target=self.__Thread_Listen__, args=(user,)).start()
         # requests=threadpool.makeRequests(self.__Thread_Listen__, [([con],None)] )
         # for req in requests:
         #     self.__chatTheradPool__.putRequest(req)
@@ -124,9 +203,20 @@ class Sock():
             print('QUERY_ERROR!')
         return result
 
-    def __LoginReq__(self, con):
+    def __SendPublicKey__(self,user):
+        time.sleep(0.1)
+        dict_request=self.__Receive__(user,user.con)
+        if("type" in dict_request.keys() and dict_request["type"]=="LOGIN_REQUEST"):
+            user.setPublicKey(dict_request['publickey'])
+            self.__Send__(user ,user.con,{"type":"publickey","publickey":str(self.__rsaMaker.public_pem,encoding='ascii')[2:-1]})
+        time.sleep(0.5)
+        self.__LoginReq__(user)
+
+
+    def __LoginReq__(self, user):
+        con=user.con
         try:
-            dict_mes = self.__Receive__(con)
+            dict_mes = self.__Receive__(user,con)
         except:
             return
         loginResult = 'None'
@@ -135,63 +225,90 @@ class Sock():
                 result = self.__Check_Memship__(dict_mes)
                 if (result == 'AC'):
                     print('user ' + dict_mes['username'] + ' Login AC' + ' ip: ' + dict_mes['ip'])
-                    self.__StartChatThread__(dict_mes["username"],con)
-                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'AC',"ftpusername":FTPUserName,"ftppassword":FTPPassWord})
+
+                    user.setUserName(dict_mes['username'])
+                    user.setPassWord(dict_mes['password'])
+
+                    self.__StartChatThread__(user)
+                    self.__Send__(user ,con, {'type': 'LOGIN_MES', 'status': 'AC',"ftpusername":FTPUserName,"ftppassword":FTPPassWord})
                     loginResult = 'LOGIN_AC'
                 elif (result == 'WRONG_PASSWORD'):
-                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'WRONG_PASSWORD'})
+                    self.__Send__(user ,con, {'type': 'LOGIN_MES', 'status': 'WRONG_PASSWORD'})
                     loginResult = 'WRONG_PASSWORD'
                 elif (result == 'NO_MEMSHIP'):
-                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'NO_MEMSHIP'})
+                    self.__Send__(user ,con, {'type': 'LOGIN_MES', 'status': 'NO_MEMSHIP'})
                     loginResult = 'NO_MEMSHIP'
                 elif (result == 'QUERY_ERROR'):
-                    self.__Send__(con, {'type': 'LOGIN_MES', 'status': 'QUERY_ERROR'})
+                    self.__Send__(user ,con, {'type': 'LOGIN_MES', 'status': 'QUERY_ERROR'})
                     loginResult = 'QUERY_ERROR'
         elif (dict_mes['type'] == 'REGISTER_MES'):
             if (dict_mes['status'] == 'register'):
                 result = self.__Register__(dict_mes)
-                if (result == 'SAME_NAME'):
-                    self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'SAME_NAME'})
-                    loginResult = 'SAME_NAME'
-                elif (result == 'AC'):
-                    self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'AC'})
+                if (result == 'AC'):
+                    self.__Send__(user ,con, {'type': 'REGISTER_MES', 'status': 'AC'})
                     loginResult = 'REGISTER_AC'
+                elif (result == 'SAME_NAME'):
+                    self.__Send__(user ,con, {'type': 'REGISTER_MES', 'status': 'SAME_NAME'})
+                    loginResult = 'SAME_NAME'
                 elif (result == 'REGISTER_ERROR'):
-                    self.__Send__(con, {'type': 'REGISTER_MES', 'status': 'REGISTER_ERROR'})
+                    self.__Send__(user ,con, {'type': 'REGISTER_MES', 'status': 'REGISTER_ERROR'})
                     loginResult = 'REGISTER_ERROR'
         if (loginResult != 'LOGIN_AC'):
             print(loginResult)
             con.close()
         return loginResult
 
-    def __Receive__(self, con):
+    def __Decrypt__(self,dict_dict):
+        if ('login' in dict_dict.keys()):
+            dict_dict["username"] = self.__rsaMaker.Decrypt(dict_dict["username"])
+            dict_dict['password'] = self.__rsaMaker.Decrypt(dict_dict['password'])
+        if ('username' in dict_dict.keys()):
+            dict_dict["username"] = self.__rsaMaker.Decrypt(dict_dict["username"])
+        if ('password' in dict_dict.keys()):
+            dict_dict['password'] = self.__rsaMaker.Decrypt(dict_dict['password'])
+        if ('content' in dict_dict.keys()):
+            dict_dict['content'] = self.__rsaMaker.Decrypt(dict_dict['content'])
+        if ('publickey' in dict_dict.keys()):
+            dict_dict['publickey'] = dict_dict['publickey'].replace('*', '\n')
+    def __Receive__(self,user, con):
         try:
             dict_bytes = con.recv(2048)
             dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
+            self.__Decrypt__(dict_dict)
             return dict_dict
         except:
             raise Exception('Receive Error!')
 
-    def __Send__(self, sock, dict):
+    def __Encrypt__(self,dict,user):
+        if("content"in dict.keys()):
+            dict['content']=user.RsaMaker.Encrypt(dict['content'])
+        if('ftpusername'in dict.keys()):
+            dict['ftpusername'] = user.RsaMaker.Encrypt(dict['ftpusername'])
+        if ('ftppassword' in dict.keys()):
+            dict['ftppassword'] = user.RsaMaker.Encrypt(dict['ftppassword'])
+    def __Send__(self,user, sock, dict):
+        self.__Encrypt__(dict,user)
         try:
             bytes_mes = bytes(json.dumps(dict), encoding='utf8')
             sock.send(bytes_mes)
             print("send dict to " + str(sock))
             print(str(dict) + "\n")
+
         except:
             print('Send to '+str(sock)+' Error!')
             raise Exception('Send Error!')
 
-    def __Close__(self,username,con):
-
-        print(username+" exits")
+    def __Close__(self,user):
+        username=user.username
+        con=user.con
         con.close()
+        print("Connect has closed")
         if(username in self.__userDict__.keys()):
-            con_list=self.__userDict__[username]
-            if(con in con_list):
-                con_list.remove(con)
-                print("Connect has removed")
-                if(len(con_list)==0):
+            user_list=self.__userDict__[username]
+            if(user in user_list):
+                user_list.remove(user)
+                print("user "+username+" has removed")
+                if(len(user_list)==0):
                     self.__userDict__.pop(username)
                     print(username+" exits completely")
 
