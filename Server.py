@@ -83,6 +83,35 @@ class RSAMaker:
         self.__rsakey = RSA.importKey(self.__private_pem)
         self.__cipher = Cipher_pkcs1_v1_5.new(self.__rsakey)
 
+class FridgeServer():
+    def __init__(self):
+        self.con=socket.socket()
+        self.temDict={'currenttem':'10','targettem':'10'}
+        self.__UpperTemDict={'type':'COMMAND','command':'upper'}
+        self.__LowerTemDict={'type':'COMMAND','command':'lower'}
+    def startServer(self):
+        self.con.connect('127.0.0.1',49999)
+        print('FridgeServer Start!Command Listening!')
+        threading.Thread(target=self.__Thread_Listen__).start()
+    def __Thread_Listen__(self):
+        while True:
+            try:
+                dict_bytes = self.con.recv(2048)
+                dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
+                self.temDict=dict_dict
+            except:
+                print('Listen Error!Connect has closed!')
+                self.con.close()
+    def UpperTem(self):
+        bytes_mes = bytes(json.dumps(self.__UpperTemDict), encoding='utf8')
+        self.con.send(bytes_mes)
+        print('Successfully upper the tem!')
+    def UpperTem(self):
+        bytes_mes = bytes(json.dumps(self.__LowerTemDict), encoding='utf8')
+        self.con.send(bytes_mes)
+        print('Successfully lower the tem!')
+    def getDictTem(self):
+        return self.temDict
 
 class Sock():
     hostName = ''
@@ -371,14 +400,22 @@ if __name__ == "__main__":
         for line in config:
             str_config+=line.strip()
         str_config.replace("\n",'')
+
         global FTPPassWord
         global FTPUserName
         dict_config=json.loads(str_config)
         FTPPassWord=dict_config['ftppassword']
         FTPUserName=dict_config['ftpusername']
+
         socketServer = Sock()
         socketServer.setSQLPasswd(dict_config['sqlpassword'])
         socketServer.startServer()
+
+        global FridgeUnits
+        FridgeUnits=FridgeServer()
+        FridgeUnits.startServer()
+
+
     except IOError:
         print('config.conf does not exists!')
     finally:
