@@ -87,10 +87,10 @@ class FridgeServer():
     def __init__(self):
         self.con=socket.socket()
         self.temDict={'currenttem':'10','targettem':'10'}
-        self.__UpperTemDict={'type':'COMMAND','command':'upper'}
+        self.__UpperTemDict={'type':'COMMAND','command':'up'}
         self.__LowerTemDict={'type':'COMMAND','command':'lower'}
     def startServer(self):
-        self.con.connect('127.0.0.1',49999)
+        self.con.connect(('127.0.0.1',49999))
         print('FridgeServer Start!Command Listening!')
         threading.Thread(target=self.__Thread_Listen__).start()
     def __Thread_Listen__(self):
@@ -98,7 +98,8 @@ class FridgeServer():
             try:
                 dict_bytes = self.con.recv(2048)
                 dict_dict = json.loads(str(dict_bytes, encoding='utf8'))
-                self.temDict=dict_dict
+                self.temDict['currenttem']=dict_dict['currenttem']
+                self.temDict['targettem']=dict_dict['targettem']
             except:
                 print('Listen Error!Connect has closed!')
                 self.con.close()
@@ -106,7 +107,7 @@ class FridgeServer():
         bytes_mes = bytes(json.dumps(self.__UpperTemDict), encoding='utf8')
         self.con.send(bytes_mes)
         print('Successfully upper the tem!')
-    def UpperTem(self):
+    def LowerTem(self):
         bytes_mes = bytes(json.dumps(self.__LowerTemDict), encoding='utf8')
         self.con.send(bytes_mes)
         print('Successfully lower the tem!')
@@ -315,7 +316,8 @@ class Sock():
             dict['ftpusername'] = user.RsaMaker.Encrypt(dict['ftpusername'])
         if ('ftppassword' in dict.keys()):
             dict['ftppassword'] = user.RsaMaker.Encrypt(dict['ftppassword'])
-    def __Send__(self,user, sock, dict):
+    def __Send__(self,user, sock, dict_dict):
+        dict=dict_dict.copy()
         self.__Encrypt__(dict,user)
         try:
             bytes_mes = bytes(json.dumps(dict), encoding='utf8')
@@ -409,11 +411,19 @@ if __name__ == "__main__":
 
         socketServer = Sock()
         socketServer.setSQLPasswd(dict_config['sqlpassword'])
-        socketServer.startServer()
 
         global FridgeUnits
-        FridgeUnits=FridgeServer()
+        FridgeUnits = FridgeServer()
         FridgeUnits.startServer()
+        FridgeUnits.UpperTem()
+        # while True:
+        #     print(FridgeUnits.temDict)
+        #     time.sleep(2)
+        #     FridgeUnits.UpperTem()
+
+        socketServer.startServer()
+
+
 
 
     except IOError:
